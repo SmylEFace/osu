@@ -2,9 +2,7 @@
 // See the LICENCE file in the repository root for full licence text.
 
 using System.Linq;
-using osu.Framework.Allocation;
 using osu.Framework.Screens;
-using osu.Game.Beatmaps;
 using osu.Game.Online.Rooms;
 using osu.Game.Screens.OnlinePlay.Components;
 using osu.Game.Screens.Select;
@@ -13,8 +11,10 @@ namespace osu.Game.Screens.OnlinePlay.Playlists
 {
     public class PlaylistsSongSelect : OnlinePlaySongSelect
     {
-        [Resolved]
-        private BeatmapManager beatmaps { get; set; }
+        public PlaylistsSongSelect(Room room)
+            : base(room)
+        {
+        }
 
         protected override BeatmapDetailArea CreateBeatmapDetailArea() => new MatchBeatmapDetailArea
         {
@@ -55,10 +55,10 @@ namespace osu.Game.Screens.OnlinePlay.Playlists
             item.Ruleset.Value = Ruleset.Value;
 
             item.RequiredMods.Clear();
-            item.RequiredMods.AddRange(Mods.Value.Select(m => m.CreateCopy()));
+            item.RequiredMods.AddRange(Mods.Value.Select(m => m.DeepClone()));
 
             item.AllowedMods.Clear();
-            item.AllowedMods.AddRange(FreeMods.Value.Select(m => m.CreateCopy()));
+            item.AllowedMods.AddRange(FreeMods.Value.Select(m => m.DeepClone()));
         }
     }
 }

@@ -10,8 +10,9 @@ using osu.Framework.Graphics;
 using osu.Framework.Graphics.Containers;
 using osu.Framework.Graphics.Textures;
 using osu.Framework.Platform;
-using osu.Game.IO;
+using osu.Game.Database;
 using osu.Game.Screens.Play;
+using osu.Game.Stores;
 
 namespace osu.Game.Storyboards.Drawables
 {
@@ -25,7 +26,7 @@ namespace osu.Game.Storyboards.Drawables
         /// </summary>
         public IBindable<bool> HasStoryboardEnded => hasStoryboardEnded;
 
-        private readonly BindableBool hasStoryboardEnded = new BindableBool();
+        private readonly BindableBool hasStoryboardEnded = new BindableBool(true);
 
         protected override Container<DrawableStoryboardLayer> Content { get; }
 
@@ -76,12 +77,12 @@ namespace osu.Game.Storyboards.Drawables
         }
 
         [BackgroundDependencyLoader(true)]
-        private void load(FileStore fileStore, GameplayClock clock, CancellationToken? cancellationToken, GameHost host)
+        private void load(GameplayClock clock, CancellationToken? cancellationToken, GameHost host, RealmAccess realm)
         {
             if (clock != null)
                 Clock = clock;
 
-            dependencies.Cache(new TextureStore(host.CreateTextureLoaderStore(fileStore.Store), false, scaleAdjust: 1));
+            dependencies.Cache(new TextureStore(host.CreateTextureLoaderStore(new RealmFileStore(realm, host.Storage).Store), false, scaleAdjust: 1));
 
             foreach (var layer in Storyboard.Layers)
             {

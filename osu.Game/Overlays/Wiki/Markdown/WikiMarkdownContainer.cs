@@ -5,19 +5,14 @@ using System.Linq;
 using Markdig.Extensions.Yaml;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
-using osu.Framework.Allocation;
 using osu.Framework.Graphics.Containers;
 using osu.Framework.Graphics.Containers.Markdown;
 using osu.Game.Graphics.Containers.Markdown;
-using osu.Game.Online.API;
 
 namespace osu.Game.Overlays.Wiki.Markdown
 {
     public class WikiMarkdownContainer : OsuMarkdownContainer
     {
-        [Resolved]
-        private IAPIProvider api { get; set; }
-
         public string CurrentPath
         {
             set => DocumentUrl = value;
@@ -33,7 +28,7 @@ namespace osu.Game.Overlays.Wiki.Markdown
 
                 case ParagraphBlock paragraphBlock:
                     // Check if paragraph only contains an image
-                    if (paragraphBlock.Inline.Count() == 1 && paragraphBlock.Inline.FirstChild is LinkInline { IsImage: true } linkInline)
+                    if (paragraphBlock.Inline?.Count() == 1 && paragraphBlock.Inline.FirstChild is LinkInline { IsImage: true } linkInline)
                     {
                         container.Add(new WikiMarkdownImageBlock(linkInline));
                         return;

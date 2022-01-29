@@ -2,33 +2,30 @@
 // See the LICENCE file in the repository root for full licence text.
 
 using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using NUnit.Framework;
 using osu.Framework.Allocation;
+using osu.Framework.Extensions;
 using osu.Framework.Graphics;
 using osu.Framework.Screens;
 using osu.Framework.Testing;
 using osu.Game.Beatmaps;
 using osu.Game.Database;
+using osu.Game.Online.API.Requests.Responses;
 using osu.Game.Online.Spectator;
 using osu.Game.Rulesets.Osu;
 using osu.Game.Rulesets.Osu.Replays;
 using osu.Game.Rulesets.UI;
+using osu.Game.Screens;
 using osu.Game.Screens.Play;
 using osu.Game.Tests.Beatmaps.IO;
 using osu.Game.Tests.Visual.Multiplayer;
 using osu.Game.Tests.Visual.Spectator;
-using osu.Game.Users;
 
 namespace osu.Game.Tests.Visual.Gameplay
 {
     public class TestSceneSpectator : ScreenTestScene
     {
-        private readonly User streamingUser = new User { Id = MultiplayerTestScene.PLAYER_1_ID, Username = "Test user" };
-
-        [Cached(typeof(SpectatorClient))]
-        private TestSpectatorClient testSpectatorClient = new TestSpectatorClient();
+        private readonly APIUser streamingUser = new APIUser { Id = MultiplayerTestScene.PLAYER_1_ID, Username = "Test user" };
 
         [Cached(typeof(UserLookupCache))]
         private UserLookupCache lookupCache = new TestUserLookupCache();
@@ -36,36 +33,37 @@ namespace osu.Game.Tests.Visual.Gameplay
         // used just to show beatmap card for the time being.
         protected override bool UseOnlineAPI => true;
 
-        private SoloSpectator spectatorScreen;
-
         [Resolved]
         private OsuGameBase game { get; set; }
 
-        private int nextFrame;
+        private TestSpectatorClient spectatorClient;
+        private SoloSpectator spectatorScreen;
 
         private BeatmapSetInfo importedBeatmap;
-
         private int importedBeatmapId;
 
-        public override void SetUpSteps()
+        [SetUpSteps]
+        public void SetupSteps()
         {
-            base.SetUpSteps();
+            DependenciesScreen dependenciesScreen = null;
 
-            AddStep("reset sent frames", () => nextFrame = 0);
+            AddStep("load dependencies", () =>
+            {
+                spectatorClient = new TestSpectatorClient();
+
+                // The screen gets suspended so it stops receiving updates.
+                Child = spectatorClient;
+
+                LoadScreen(dependenciesScreen = new DependenciesScreen(spectatorClient));
+            });
+
+            AddUntilStep("wait for dependencies to load", () => dependenciesScreen.IsLoaded);
 
             AddStep("import beatmap", () =>
             {
-                importedBeatmap = ImportBeatmapTest.LoadOszIntoOsu(game, virtualTrack: true).Result;
-                importedBeatmapId = importedBeatmap.Beatmaps.First(b => b.RulesetID == 0).OnlineBeatmapID ?? -1;
+                importedBeatmap = BeatmapImportHelper.LoadOszIntoOsu(game, virtualTrack: true).GetResultSafely();
+                importedBeatmapId = importedBeatmap.Beatmaps.First(b => b.Ruleset.OnlineID == 0).OnlineID;
             });
-
-            AddStep("add streaming client", () =>
-            {
-                Remove(testSpectatorClient);
-                Add(testSpectatorClient);
-            });
-
-            finish();
         }
 
         [Test]
@@ -76,9 +74,9 @@ namespace osu.Game.Tests.Visual.Gameplay
             AddAssert("screen hasn't changed", () => Stack.CurrentScreen is SoloSpectator);
 
             start();
-            sendFrames();
-
             waitForPlayer();
+
+            sendFrames();
             AddAssert("ensure frames arrived", () => replayHandler.HasFrames);
 
             AddUntilStep("wait for frame starvation", () => replayHandler.WaitingForFrame);
@@ -105,7 +103,8 @@ namespace osu.Game.Tests.Visual.Gameplay
             waitForPlayer();
             checkPaused(true);
 
-            sendFrames(1000); // send enough frames to ensure play won't be paused
+            // send enough frames to ensure play won't be paused
+            sendFrames(100);
 
             checkPaused(false);
         }
@@ -114,13 +113,12 @@ namespace osu.Game.Tests.Visual.Gameplay
         public void TestSpectatingDuringGameplay()
         {
             start();
+            sendFrames(300);
 
             loadSpectatingScreen();
-
-            AddStep("advance frame count", () => nextFrame = 300);
-            sendFrames();
-
             waitForPlayer();
+
+            sendFrames(300);
 
             AddUntilStep("playing from correct point in time", () => player.ChildrenOfType<DrawableRuleset>().First().FrameStableClock.CurrentTime > 30000);
         }
@@ -210,37 +208,38 @@ namespace osu.Game.Tests.Visual.Gameplay
         private double currentFrameStableTime
             => player.ChildrenOfType<FrameStabilityContainer>().First().FrameStableClock.CurrentTime;
 
-        private void waitForPlayer() => AddUntilStep("wait for player", () => Stack.CurrentScreen is Player);
+        private void waitForPlayer() => AddUntilStep("wait for player", () => (Stack.CurrentScreen as Player)?.IsLoaded == true);
 
-        private void start(int? beatmapId = null) => AddStep("start play", () => testSpectatorClient.StartPlay(streamingUser.Id, beatmapId ?? importedBeatmapId));
+        private void start(int? beatmapId = null) => AddStep("start play", () => spectatorClient.StartPlay(streamingUser.Id, beatmapId ?? importedBeatmapId));
 
-        private void finish() => AddStep("end play", () => testSpectatorClient.EndPlay(streamingUser.Id));
+        private void finish() => AddStep("end play", () => spectatorClient.EndPlay(streamingUser.Id));
 
         private void checkPaused(bool state) =>
             AddUntilStep($"game is {(state ? "paused" : "playing")}", () => player.ChildrenOfType<DrawableRuleset>().First().IsPaused.Value == state);
 
         private void sendFrames(int count = 10)
         {
-            AddStep("send frames", () =>
-            {
-                testSpectatorClient.SendFrames(streamingUser.Id, nextFrame, count);
-                nextFrame += count;
-            });
+            AddStep("send frames", () => spectatorClient.SendFrames(streamingUser.Id, count));
         }
 
         private void loadSpectatingScreen()
         {
-            AddStep("load screen", () => LoadScreen(spectatorScreen = new SoloSpectator(streamingUser)));
+            AddStep("load spectator", () => LoadScreen(spectatorScreen = new SoloSpectator(streamingUser)));
             AddUntilStep("wait for screen load", () => spectatorScreen.LoadState == LoadState.Loaded);
         }
 
-        internal class TestUserLookupCache : UserLookupCache
+        /// <summary>
+        /// Used for the sole purpose of adding <see cref="TestSpectatorClient"/> as a resolvable dependency.
+        /// </summary>
+        private class DependenciesScreen : OsuScreen
         {
-            protected override Task<User> ComputeValueAsync(int lookup, CancellationToken token = default) => Task.FromResult(new User
+            [Cached(typeof(SpectatorClient))]
+            public readonly TestSpectatorClient Client;
+
+            public DependenciesScreen(TestSpectatorClient client)
             {
-                Id = lookup,
-                Username = $"User {lookup}"
-            });
+                Client = client;
+            }
         }
     }
 }

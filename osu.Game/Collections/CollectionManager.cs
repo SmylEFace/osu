@@ -14,6 +14,7 @@ using osu.Framework.Graphics;
 using osu.Framework.Logging;
 using osu.Framework.Platform;
 using osu.Game.Beatmaps;
+using osu.Game.Database;
 using osu.Game.IO;
 using osu.Game.IO.Legacy;
 using osu.Game.Overlays.Notifications;
@@ -27,7 +28,7 @@ namespace osu.Game.Collections
     /// This is currently reading and writing from the osu-stable file format. This is a temporary arrangement until we refactor the
     /// database backing the game. Going forward writing should be done in a similar way to other model stores.
     /// </remarks>
-    public class CollectionManager : Component
+    public class CollectionManager : Component, IPostNotifications
     {
         /// <summary>
         /// Database version in stable-compatible YYYYMMDD format.
@@ -35,11 +36,9 @@ namespace osu.Game.Collections
         private const int database_version = 30000000;
 
         private const string database_name = "collection.db";
+        private const string database_backup_name = "collection.db.bak";
 
         public readonly BindableList<BeatmapCollection> Collections = new BindableList<BeatmapCollection>();
-
-        [Resolved]
-        private GameHost host { get; set; }
 
         [Resolved]
         private BeatmapManager beatmaps { get; set; }
@@ -51,10 +50,26 @@ namespace osu.Game.Collections
             this.storage = storage;
         }
 
+        [Resolved(canBeNull: true)]
+        private DatabaseContextFactory efContextFactory { get; set; } = null!;
+
         [BackgroundDependencyLoader]
         private void load()
         {
+            efContextFactory?.WaitForMigrationCompletion();
+
             Collections.CollectionChanged += collectionsChanged;
+
+            if (storage.Exists(database_backup_name))
+            {
+                // If a backup file exists, it means the previous write operation didn't run to completion.
+                // Always prefer the backup file in such a case as it's the most recent copy that is guaranteed to not be malformed.
+                //
+                // The database is saved 100ms after any change, and again when the game is closed, so there shouldn't be a large diff between the two files in the worst case.
+                if (storage.Exists(database_name))
+                    storage.Delete(database_name);
+                File.Copy(storage.GetFullPath(database_backup_name), storage.GetFullPath(database_name));
+            }
 
             if (storage.Exists(database_name))
             {
@@ -68,7 +83,7 @@ namespace osu.Game.Collections
             }
         }
 
-        private void collectionsChanged(object sender, NotifyCollectionChangedEventArgs e)
+        private void collectionsChanged(object sender, NotifyCollectionChangedEventArgs e) => Schedule(() =>
         {
             switch (e.Action)
             {
@@ -92,11 +107,8 @@ namespace osu.Game.Collections
             }
 
             backgroundSave();
-        }
+        });
 
-        /// <summary>
-        /// Set an endpoint for notifications to be posted to.
-        /// </summary>
         public Action<Notification> PostNotification { protected get; set; }
 
         /// <summary>
@@ -240,7 +252,7 @@ namespace osu.Game.Collections
         /// </summary>
         private void backgroundSave()
         {
-            var current = Interlocked.Increment(ref lastSave);
+            int current = Interlocked.Increment(ref lastSave);
             Task.Delay(100).ContinueWith(task =>
             {
                 if (current != lastSave)
@@ -257,23 +269,50 @@ namespace osu.Game.Collections
             {
                 Interlocked.Increment(ref lastSave);
 
+                // This is NOT thread-safe!!
                 try
                 {
-                    // This is NOT thread-safe!!
+                    string tempPath = Path.GetTempFileName();
 
-                    using (var sw = new SerializationWriter(storage.GetStream(database_name, FileAccess.Write)))
+                    using (var ms = new MemoryStream())
                     {
-                        sw.Write(database_version);
-                        sw.Write(Collections.Count);
-
-                        foreach (var c in Collections)
+                        using (var sw = new SerializationWriter(ms, true))
                         {
-                            sw.Write(c.Name.Value);
-                            sw.Write(c.Beatmaps.Count);
+                            sw.Write(database_version);
 
-                            foreach (var b in c.Beatmaps)
-                                sw.Write(b.MD5Hash);
+                            var collectionsCopy = Collections.ToArray();
+                            sw.Write(collectionsCopy.Length);
+
+                            foreach (var c in collectionsCopy)
+                            {
+                                sw.Write(c.Name.Value);
+
+                                var beatmapsCopy = c.Beatmaps.ToArray();
+                                sw.Write(beatmapsCopy.Length);
+
+                                foreach (var b in beatmapsCopy)
+                                    sw.Write(b.MD5Hash);
+                            }
                         }
+
+                        using (var fs = File.OpenWrite(tempPath))
+                            ms.WriteTo(fs);
+
+                        string databasePath = storage.GetFullPath(database_name);
+                        string databaseBackupPath = storage.GetFullPath(database_backup_name);
+
+                        // Back up the existing database, clearing any existing backup.
+                        if (File.Exists(databaseBackupPath))
+                            File.Delete(databaseBackupPath);
+                        if (File.Exists(databasePath))
+                            File.Move(databasePath, databaseBackupPath);
+
+                        // Move the new database in-place of the existing one.
+                        File.Move(tempPath, databasePath);
+
+                        // If everything succeeded up to this point, remove the backup file.
+                        if (File.Exists(databaseBackupPath))
+                            File.Delete(databaseBackupPath);
                     }
 
                     if (saveFailures < 10)

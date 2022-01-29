@@ -2,11 +2,14 @@
 // See the LICENCE file in the repository root for full licence text.
 
 using System;
+using System.Diagnostics;
 using System.Linq;
+using JetBrains.Annotations;
 using Newtonsoft.Json;
 using osu.Framework.Bindables;
 using osu.Game.Beatmaps;
 using osu.Game.Online.API;
+using osu.Game.Online.API.Requests.Responses;
 using osu.Game.Rulesets;
 using osu.Game.Rulesets.Mods;
 
@@ -16,6 +19,9 @@ namespace osu.Game.Online.Rooms
     {
         [JsonProperty("id")]
         public long ID { get; set; }
+
+        [JsonProperty("owner_id")]
+        public int OwnerID { get; set; }
 
         [JsonProperty("beatmap_id")]
         public int BeatmapID { get; set; }
@@ -29,11 +35,22 @@ namespace osu.Game.Online.Rooms
         [JsonProperty("expired")]
         public bool Expired { get; set; }
 
-        [JsonIgnore]
-        public readonly Bindable<BeatmapInfo> Beatmap = new Bindable<BeatmapInfo>();
+        [JsonProperty("playlist_order")]
+        public ushort? PlaylistOrder { get; set; }
+
+        [JsonProperty("played_at")]
+        public DateTimeOffset? PlayedAt { get; set; }
 
         [JsonIgnore]
-        public readonly Bindable<RulesetInfo> Ruleset = new Bindable<RulesetInfo>();
+        public IBindable<bool> Valid => valid;
+
+        private readonly Bindable<bool> valid = new BindableBool(true);
+
+        [JsonIgnore]
+        public readonly Bindable<IBeatmapInfo> Beatmap = new Bindable<IBeatmapInfo>();
+
+        [JsonIgnore]
+        public readonly Bindable<IRulesetInfo> Ruleset = new Bindable<IRulesetInfo>();
 
         [JsonIgnore]
         public readonly BindableList<Mod> AllowedMods = new BindableList<Mod>();
@@ -42,7 +59,7 @@ namespace osu.Game.Online.Rooms
         public readonly BindableList<Mod> RequiredMods = new BindableList<Mod>();
 
         [JsonProperty("beatmap")]
-        private APIPlaylistBeatmap apiBeatmap { get; set; }
+        private APIBeatmap apiBeatmap { get; set; }
 
         private APIMod[] allowedModsBacking;
 
@@ -64,14 +81,18 @@ namespace osu.Game.Online.Rooms
 
         public PlaylistItem()
         {
-            Beatmap.BindValueChanged(beatmap => BeatmapID = beatmap.NewValue?.OnlineBeatmapID ?? 0);
-            Ruleset.BindValueChanged(ruleset => RulesetID = ruleset.NewValue?.ID ?? 0);
+            Beatmap.BindValueChanged(beatmap => BeatmapID = beatmap.NewValue?.OnlineID ?? -1);
+            Ruleset.BindValueChanged(ruleset => RulesetID = ruleset.NewValue?.OnlineID ?? 0);
         }
 
-        public void MapObjects(BeatmapManager beatmaps, RulesetStore rulesets)
+        public void MarkInvalid() => valid.Value = false;
+
+        public void MapObjects(IRulesetStore rulesets)
         {
-            Beatmap.Value ??= apiBeatmap.ToBeatmap(rulesets);
+            Beatmap.Value ??= apiBeatmap;
             Ruleset.Value ??= rulesets.GetRuleset(RulesetID);
+
+            Debug.Assert(Ruleset.Value != null);
 
             Ruleset rulesetInstance = Ruleset.Value.CreateInstance();
 
@@ -92,9 +113,27 @@ namespace osu.Game.Online.Rooms
             }
         }
 
+        #region Newtonsoft.Json implicit ShouldSerialize() methods
+
+        // The properties in this region are used implicitly by Newtonsoft.Json to not serialise certain fields in some cases.
+        // They rely on being named exactly the same as the corresponding fields (casing included) and as such should NOT be renamed
+        // unless the fields are also renamed.
+
+        [UsedImplicitly]
         public bool ShouldSerializeID() => false;
+
+        // ReSharper disable once IdentifierTypo
+        [UsedImplicitly]
         public bool ShouldSerializeapiBeatmap() => false;
 
-        public bool Equals(PlaylistItem other) => ID == other?.ID && BeatmapID == other.BeatmapID && RulesetID == other.RulesetID;
+        #endregion
+
+        public bool Equals(PlaylistItem other)
+            => ID == other?.ID
+               && BeatmapID == other.BeatmapID
+               && RulesetID == other.RulesetID
+               && Expired == other.Expired
+               && allowedMods.SequenceEqual(other.allowedMods)
+               && requiredMods.SequenceEqual(other.requiredMods);
     }
 }

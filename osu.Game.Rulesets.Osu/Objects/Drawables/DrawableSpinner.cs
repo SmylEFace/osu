@@ -10,7 +10,6 @@ using osu.Framework.Bindables;
 using osu.Framework.Graphics;
 using osu.Framework.Graphics.Containers;
 using osu.Game.Audio;
-using osu.Game.Graphics;
 using osu.Game.Rulesets.Judgements;
 using osu.Game.Rulesets.Objects;
 using osu.Game.Rulesets.Objects.Drawables;
@@ -28,6 +27,8 @@ namespace osu.Game.Rulesets.Osu.Objects.Drawables
         public new Spinner HitObject => (Spinner)base.HitObject;
 
         public new OsuSpinnerJudgementResult Result => (OsuSpinnerJudgementResult)base.Result;
+
+        public SkinnableDrawable Body { get; private set; }
 
         public SpinnerRotationTracker RotationTracker { get; private set; }
 
@@ -67,7 +68,7 @@ namespace osu.Game.Rulesets.Osu.Objects.Drawables
         }
 
         [BackgroundDependencyLoader]
-        private void load(OsuColour colours)
+        private void load()
         {
             Origin = Anchor.Centre;
             RelativeSizeAxes = Axes.Both;
@@ -86,7 +87,7 @@ namespace osu.Game.Rulesets.Osu.Objects.Drawables
                     RelativeSizeAxes = Axes.Y,
                     Children = new Drawable[]
                     {
-                        new SkinnableDrawable(new OsuSkinComponent(OsuSkinComponents.SpinnerBody), _ => new DefaultSpinner()),
+                        Body = new SkinnableDrawable(new OsuSkinComponent(OsuSkinComponents.SpinnerBody), _ => new DefaultSpinner()),
                         RotationTracker = new SpinnerRotationTracker(this)
                     }
                 },

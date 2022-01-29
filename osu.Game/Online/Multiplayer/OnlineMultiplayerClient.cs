@@ -9,9 +9,9 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.SignalR.Client;
 using osu.Framework.Allocation;
 using osu.Framework.Bindables;
-using osu.Game.Beatmaps;
+using osu.Game.Database;
 using osu.Game.Online.API;
-using osu.Game.Online.API.Requests;
+using osu.Game.Online.API.Requests.Responses;
 using osu.Game.Online.Rooms;
 
 namespace osu.Game.Online.Multiplayer
@@ -29,6 +29,9 @@ namespace osu.Game.Online.Multiplayer
 
         private HubConnection? connection => connector?.CurrentConnection;
 
+        [Resolved]
+        private BeatmapLookupCache beatmapLookupCache { get; set; } = null!;
+
         public OnlineMultiplayerClient(EndpointConfiguration endpoints)
         {
             endpoint = endpoints.MultiplayerEndpointUrl;
@@ -37,6 +40,8 @@ namespace osu.Game.Online.Multiplayer
         [BackgroundDependencyLoader]
         private void load(IAPIProvider api)
         {
+            // Importantly, we are intentionally not using MessagePack here to correctly support derived class serialization.
+            // More information on the limitations / reasoning can be found in osu-server-spectator's initialisation code.
             connector = api.GetHubConnector(nameof(OnlineMultiplayerClient), endpoint);
 
             if (connector != null)
@@ -48,6 +53,7 @@ namespace osu.Game.Online.Multiplayer
                     connection.On<MultiplayerRoomState>(nameof(IMultiplayerClient.RoomStateChanged), ((IMultiplayerClient)this).RoomStateChanged);
                     connection.On<MultiplayerRoomUser>(nameof(IMultiplayerClient.UserJoined), ((IMultiplayerClient)this).UserJoined);
                     connection.On<MultiplayerRoomUser>(nameof(IMultiplayerClient.UserLeft), ((IMultiplayerClient)this).UserLeft);
+                    connection.On<MultiplayerRoomUser>(nameof(IMultiplayerClient.UserKicked), ((IMultiplayerClient)this).UserKicked);
                     connection.On<int>(nameof(IMultiplayerClient.HostChanged), ((IMultiplayerClient)this).HostChanged);
                     connection.On<MultiplayerRoomSettings>(nameof(IMultiplayerClient.SettingsChanged), ((IMultiplayerClient)this).SettingsChanged);
                     connection.On<int, MultiplayerUserState>(nameof(IMultiplayerClient.UserStateChanged), ((IMultiplayerClient)this).UserStateChanged);
@@ -56,18 +62,24 @@ namespace osu.Game.Online.Multiplayer
                     connection.On(nameof(IMultiplayerClient.ResultsReady), ((IMultiplayerClient)this).ResultsReady);
                     connection.On<int, IEnumerable<APIMod>>(nameof(IMultiplayerClient.UserModsChanged), ((IMultiplayerClient)this).UserModsChanged);
                     connection.On<int, BeatmapAvailability>(nameof(IMultiplayerClient.UserBeatmapAvailabilityChanged), ((IMultiplayerClient)this).UserBeatmapAvailabilityChanged);
+                    connection.On<MatchRoomState>(nameof(IMultiplayerClient.MatchRoomStateChanged), ((IMultiplayerClient)this).MatchRoomStateChanged);
+                    connection.On<int, MatchUserState>(nameof(IMultiplayerClient.MatchUserStateChanged), ((IMultiplayerClient)this).MatchUserStateChanged);
+                    connection.On<MatchServerEvent>(nameof(IMultiplayerClient.MatchEvent), ((IMultiplayerClient)this).MatchEvent);
+                    connection.On<MultiplayerPlaylistItem>(nameof(IMultiplayerClient.PlaylistItemAdded), ((IMultiplayerClient)this).PlaylistItemAdded);
+                    connection.On<long>(nameof(IMultiplayerClient.PlaylistItemRemoved), ((IMultiplayerClient)this).PlaylistItemRemoved);
+                    connection.On<MultiplayerPlaylistItem>(nameof(IMultiplayerClient.PlaylistItemChanged), ((IMultiplayerClient)this).PlaylistItemChanged);
                 };
 
                 IsConnected.BindTo(connector.IsConnected);
             }
         }
 
-        protected override Task<MultiplayerRoom> JoinRoom(long roomId)
+        protected override Task<MultiplayerRoom> JoinRoom(long roomId, string? password = null)
         {
             if (!IsConnected.Value)
                 return Task.FromCanceled<MultiplayerRoom>(new CancellationToken(true));
 
-            return connection.InvokeAsync<MultiplayerRoom>(nameof(IMultiplayerServer.JoinRoom), roomId);
+            return connection.InvokeAsync<MultiplayerRoom>(nameof(IMultiplayerServer.JoinRoomWithPassword), roomId, password ?? string.Empty);
         }
 
         protected override Task LeaveRoomInternal()
@@ -84,6 +96,14 @@ namespace osu.Game.Online.Multiplayer
                 return Task.CompletedTask;
 
             return connection.InvokeAsync(nameof(IMultiplayerServer.TransferHost), userId);
+        }
+
+        public override Task KickUser(int userId)
+        {
+            if (!IsConnected.Value)
+                return Task.CompletedTask;
+
+            return connection.InvokeAsync(nameof(IMultiplayerServer.KickUser), userId);
         }
 
         public override Task ChangeSettings(MultiplayerRoomSettings settings)
@@ -118,6 +138,14 @@ namespace osu.Game.Online.Multiplayer
             return connection.InvokeAsync(nameof(IMultiplayerServer.ChangeUserMods), newMods);
         }
 
+        public override Task SendMatchRequest(MatchUserRequest request)
+        {
+            if (!IsConnected.Value)
+                return Task.CompletedTask;
+
+            return connection.InvokeAsync(nameof(IMultiplayerServer.SendMatchRequest), request);
+        }
+
         public override Task StartMatch()
         {
             if (!IsConnected.Value)
@@ -126,27 +154,41 @@ namespace osu.Game.Online.Multiplayer
             return connection.InvokeAsync(nameof(IMultiplayerServer.StartMatch));
         }
 
-        protected override Task<BeatmapSetInfo> GetOnlineBeatmapSet(int beatmapId, CancellationToken cancellationToken = default)
+        public override Task AbortGameplay()
         {
-            var tcs = new TaskCompletionSource<BeatmapSetInfo>();
-            var req = new GetBeatmapSetRequest(beatmapId, BeatmapSetLookupType.BeatmapId);
+            if (!IsConnected.Value)
+                return Task.CompletedTask;
 
-            req.Success += res =>
-            {
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    tcs.SetCanceled();
-                    return;
-                }
+            return connection.InvokeAsync(nameof(IMultiplayerServer.AbortGameplay));
+        }
 
-                tcs.SetResult(res.ToBeatmapSet(Rulesets));
-            };
+        public override Task AddPlaylistItem(MultiplayerPlaylistItem item)
+        {
+            if (!IsConnected.Value)
+                return Task.CompletedTask;
 
-            req.Failure += e => tcs.SetException(e);
+            return connection.InvokeAsync(nameof(IMultiplayerServer.AddPlaylistItem), item);
+        }
 
-            API.Queue(req);
+        public override Task EditPlaylistItem(MultiplayerPlaylistItem item)
+        {
+            if (!IsConnected.Value)
+                return Task.CompletedTask;
 
-            return tcs.Task;
+            return connection.InvokeAsync(nameof(IMultiplayerServer.EditPlaylistItem), item);
+        }
+
+        public override Task RemovePlaylistItem(long playlistItemId)
+        {
+            if (!IsConnected.Value)
+                return Task.CompletedTask;
+
+            return connection.InvokeAsync(nameof(IMultiplayerServer.RemovePlaylistItem), playlistItemId);
+        }
+
+        public override Task<APIBeatmap> GetAPIBeatmap(int beatmapId, CancellationToken cancellationToken = default)
+        {
+            return beatmapLookupCache.GetBeatmapAsync(beatmapId, cancellationToken);
         }
 
         protected override void Dispose(bool isDisposing)

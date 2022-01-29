@@ -17,6 +17,7 @@ using osu.Game.Overlays.Mods;
 using osu.Game.Rulesets;
 using osu.Game.Rulesets.Mods;
 using osu.Game.Screens.Select;
+using osu.Game.Users;
 using osu.Game.Utils;
 
 namespace osu.Game.Screens.OnlinePlay
@@ -32,21 +33,26 @@ namespace osu.Game.Screens.OnlinePlay
         [Resolved(typeof(Room), nameof(Room.Playlist))]
         protected BindableList<PlaylistItem> Playlist { get; private set; }
 
-        protected readonly Bindable<IReadOnlyList<Mod>> FreeMods = new Bindable<IReadOnlyList<Mod>>(Array.Empty<Mod>());
-
         [CanBeNull]
         [Resolved(CanBeNull = true)]
-        private IBindable<PlaylistItem> selectedItem { get; set; }
+        protected IBindable<PlaylistItem> SelectedItem { get; private set; }
+
+        protected override UserActivity InitialActivity => new UserActivity.InLobby(room);
+
+        protected readonly Bindable<IReadOnlyList<Mod>> FreeMods = new Bindable<IReadOnlyList<Mod>>(Array.Empty<Mod>());
 
         private readonly FreeModSelectOverlay freeModSelectOverlay;
+        private readonly Room room;
 
         private WorkingBeatmap initialBeatmap;
         private RulesetInfo initialRuleset;
         private IReadOnlyList<Mod> initialMods;
         private bool itemSelected;
 
-        protected OnlinePlaySongSelect()
+        protected OnlinePlaySongSelect(Room room)
         {
+            this.room = room;
+
             Padding = new MarginPadding { Horizontal = HORIZONTAL_OVERFLOW_PADDING };
 
             freeModSelectOverlay = new FreeModSelectOverlay
@@ -59,6 +65,8 @@ namespace osu.Game.Screens.OnlinePlay
         [BackgroundDependencyLoader]
         private void load()
         {
+            LeftArea.Padding = new MarginPadding { Top = Header.HEIGHT };
+
             initialBeatmap = Beatmap.Value;
             initialRuleset = Ruleset.Value;
             initialMods = Mods.Value.ToList();
@@ -72,8 +80,8 @@ namespace osu.Game.Screens.OnlinePlay
 
             // At this point, Mods contains both the required and allowed mods. For selection purposes, it should only contain the required mods.
             // Similarly, freeMods is currently empty but should only contain the allowed mods.
-            Mods.Value = selectedItem?.Value?.RequiredMods.Select(m => m.CreateCopy()).ToArray() ?? Array.Empty<Mod>();
-            FreeMods.Value = selectedItem?.Value?.AllowedMods.Select(m => m.CreateCopy()).ToArray() ?? Array.Empty<Mod>();
+            Mods.Value = SelectedItem?.Value?.RequiredMods.Select(m => m.DeepClone()).ToArray() ?? Array.Empty<Mod>();
+            FreeMods.Value = SelectedItem?.Value?.AllowedMods.Select(m => m.DeepClone()).ToArray() ?? Array.Empty<Mod>();
 
             Mods.BindValueChanged(onModsChanged);
             Ruleset.BindValueChanged(onRulesetChanged);
@@ -108,8 +116,8 @@ namespace osu.Game.Screens.OnlinePlay
                 }
             };
 
-            item.RequiredMods.AddRange(Mods.Value.Select(m => m.CreateCopy()));
-            item.AllowedMods.AddRange(FreeMods.Value.Select(m => m.CreateCopy()));
+            item.RequiredMods.AddRange(Mods.Value.Select(m => m.DeepClone()));
+            item.AllowedMods.AddRange(FreeMods.Value.Select(m => m.DeepClone()));
 
             SelectItem(item);
             return true;
@@ -144,7 +152,7 @@ namespace osu.Game.Screens.OnlinePlay
             return base.OnExiting(next);
         }
 
-        protected override ModSelectOverlay CreateModSelectOverlay() => new LocalPlayerModSelectOverlay
+        protected override ModSelectOverlay CreateModSelectOverlay() => new UserModSelectOverlay
         {
             IsValidMod = IsValidMod
         };
@@ -161,7 +169,7 @@ namespace osu.Game.Screens.OnlinePlay
         /// </summary>
         /// <param name="mod">The <see cref="Mod"/> to check.</param>
         /// <returns>Whether <paramref name="mod"/> is a valid mod for online play.</returns>
-        protected virtual bool IsValidMod(Mod mod) => mod.HasImplementation && !ModUtils.FlattenMod(mod).Any(m => m is ModAutoplay);
+        protected virtual bool IsValidMod(Mod mod) => mod.HasImplementation && ModUtils.FlattenMod(mod).All(m => m.UserPlayable);
 
         /// <summary>
         /// Checks whether a given <see cref="Mod"/> is valid for per-player free-mod selection.

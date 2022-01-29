@@ -127,6 +127,17 @@ namespace osu.Game.Rulesets.UI
             return base.Handle(e);
         }
 
+        protected override bool HandleMouseTouchStateChange(TouchStateChangeEvent e)
+        {
+            if (mouseDisabled.Value)
+            {
+                // Only propagate positional data when mouse buttons are disabled.
+                e = new TouchStateChangeEvent(e.State, e.Input, e.Touch, false, e.LastPosition);
+            }
+
+            return base.HandleMouseTouchStateChange(e);
+        }
+
         #endregion
 
         #region Key Counter Attachment
@@ -152,12 +163,12 @@ namespace osu.Game.Rulesets.UI
             {
             }
 
-            public bool OnPressed(T action) => Target.Children.OfType<KeyCounterAction<T>>().Any(c => c.OnPressed(action, Clock.Rate >= 0));
+            public bool OnPressed(KeyBindingPressEvent<T> e) => Target.Children.OfType<KeyCounterAction<T>>().Any(c => c.OnPressed(e.Action, Clock.Rate >= 0));
 
-            public void OnReleased(T action)
+            public void OnReleased(KeyBindingReleaseEvent<T> e)
             {
                 foreach (var c in Target.Children.OfType<KeyCounterAction<T>>())
-                    c.OnReleased(action, Clock.Rate >= 0);
+                    c.OnReleased(e.Action, Clock.Rate >= 0);
             }
         }
 
@@ -168,6 +179,8 @@ namespace osu.Game.Rulesets.UI
 
         public class RulesetKeyBindingContainer : DatabasedKeyBindingContainer<T>
         {
+            protected override bool HandleRepeats => false;
+
             public RulesetKeyBindingContainer(RulesetInfo ruleset, int variant, SimultaneousBindingMode unique)
                 : base(ruleset, variant, unique)
             {
@@ -177,7 +190,7 @@ namespace osu.Game.Rulesets.UI
             {
                 base.ReloadMappings();
 
-                KeyBindings = KeyBindings.Where(b => KeyBindingStore.CheckValidForGameplay(b.KeyCombination)).ToList();
+                KeyBindings = KeyBindings.Where(b => RealmKeyBindingStore.CheckValidForGameplay(b.KeyCombination)).ToList();
             }
         }
     }

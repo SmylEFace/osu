@@ -15,7 +15,16 @@ namespace osu.Game.Scoring.Legacy
 {
     public class LegacyScoreEncoder
     {
-        public const int LATEST_VERSION = 128;
+        /// <summary>
+        /// Database version in stable-compatible YYYYMMDD format.
+        /// Should be incremented if any changes are made to the format/usage.
+        /// </summary>
+        public const int LATEST_VERSION = FIRST_LAZER_VERSION;
+
+        /// <summary>
+        /// The first stable-compatible YYYYMMDD format version given to lazer usage of replays.
+        /// </summary>
+        public const int FIRST_LAZER_VERSION = 30000000;
 
         private readonly Score score;
         private readonly IBeatmap beatmap;
@@ -25,7 +34,7 @@ namespace osu.Game.Scoring.Legacy
             this.score = score;
             this.beatmap = beatmap;
 
-            if (score.ScoreInfo.Beatmap.RulesetID < 0 || score.ScoreInfo.Beatmap.RulesetID > 3)
+            if (score.ScoreInfo.BeatmapInfo.Ruleset.OnlineID < 0 || score.ScoreInfo.BeatmapInfo.Ruleset.OnlineID > 3)
                 throw new ArgumentException("Only scores in the osu, taiko, catch, or mania rulesets can be encoded to the legacy score format.", nameof(score));
         }
 
@@ -33,11 +42,11 @@ namespace osu.Game.Scoring.Legacy
         {
             using (SerializationWriter sw = new SerializationWriter(stream))
             {
-                sw.Write((byte)(score.ScoreInfo.Ruleset.ID ?? 0));
+                sw.Write((byte)(score.ScoreInfo.Ruleset.OnlineID));
                 sw.Write(LATEST_VERSION);
-                sw.Write(score.ScoreInfo.Beatmap.MD5Hash);
-                sw.Write(score.ScoreInfo.UserString);
-                sw.Write($"lazer-{score.ScoreInfo.UserString}-{score.ScoreInfo.Date}".ComputeMD5Hash());
+                sw.Write(score.ScoreInfo.BeatmapInfo.MD5Hash);
+                sw.Write(score.ScoreInfo.User.Username);
+                sw.Write(FormattableString.Invariant($"lazer-{score.ScoreInfo.User.Username}-{score.ScoreInfo.Date}").ComputeMD5Hash());
                 sw.Write((ushort)(score.ScoreInfo.GetCount300() ?? 0));
                 sw.Write((ushort)(score.ScoreInfo.GetCount100() ?? 0));
                 sw.Write((ushort)(score.ScoreInfo.GetCount50() ?? 0));
@@ -63,7 +72,7 @@ namespace osu.Game.Scoring.Legacy
 
         private byte[] createReplayData()
         {
-            var content = new ASCIIEncoding().GetBytes(replayStringContent);
+            byte[] content = new ASCIIEncoding().GetBytes(replayStringContent);
 
             using (var outStream = new MemoryStream())
             {
@@ -101,7 +110,9 @@ namespace osu.Game.Scoring.Legacy
                     }
                 }
 
-                replayData.AppendFormat(@"{0}|{1}|{2}|{3},", -12345, 0, 0, 0);
+                // Warning: this is purposefully hardcoded as a string rather than interpolating, as in some cultures the minus sign is not encoded as the standard ASCII U+00C2 codepoint,
+                // which then would break decoding.
+                replayData.Append(@"-12345|0|0|0");
                 return replayData.ToString();
             }
         }

@@ -19,6 +19,11 @@ namespace osu.Game.Rulesets.Scoring
         public event Action<JudgementResult> NewJudgement;
 
         /// <summary>
+        /// Invoked when a judgement is reverted, usually due to rewinding gameplay.
+        /// </summary>
+        public event Action<JudgementResult> JudgementReverted;
+
+        /// <summary>
         /// The maximum number of hits that can be judged.
         /// </summary>
         protected int MaxHits { get; private set; }
@@ -71,6 +76,8 @@ namespace osu.Game.Rulesets.Scoring
             JudgedHits--;
 
             RevertResultInternal(result);
+
+            JudgementReverted?.Invoke(result);
         }
 
         /// <summary>
@@ -128,7 +135,7 @@ namespace osu.Game.Rulesets.Scoring
                 if (result == null)
                     throw new InvalidOperationException($"{GetType().ReadableName()} must provide a {nameof(JudgementResult)} through {nameof(CreateResult)}.");
 
-                result.Type = judgement.MaxResult;
+                result.Type = GetSimulatedHitResult(judgement);
                 ApplyResult(result);
             }
         }
@@ -138,5 +145,12 @@ namespace osu.Game.Rulesets.Scoring
             base.Update();
             hasCompleted.Value = JudgedHits == MaxHits && (JudgedHits == 0 || lastAppliedResult.TimeAbsolute < Clock.CurrentTime);
         }
+
+        /// <summary>
+        /// Gets a simulated <see cref="HitResult"/> for a judgement. Used during <see cref="SimulateAutoplay"/> to simulate a "perfect" play.
+        /// </summary>
+        /// <param name="judgement">The judgement to simulate a <see cref="HitResult"/> for.</param>
+        /// <returns>The simulated <see cref="HitResult"/> for the judgement.</returns>
+        protected virtual HitResult GetSimulatedHitResult(Judgement judgement) => judgement.MaxResult;
     }
 }

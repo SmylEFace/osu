@@ -1,10 +1,13 @@
 ﻿// Copyright (c) ppy Pty Ltd <contact@ppy.sh>. Licensed under the MIT Licence.
 // See the LICENCE file in the repository root for full licence text.
 
+using System;
 using osu.Framework.Extensions.Color4Extensions;
 using osu.Game.Beatmaps;
+using osu.Game.Overlays;
 using osu.Game.Rulesets.Scoring;
 using osu.Game.Scoring;
+using osu.Game.Utils;
 using osuTK.Graphics;
 
 namespace osu.Game.Graphics
@@ -14,30 +17,54 @@ namespace osu.Game.Graphics
         public static Color4 Gray(float amt) => new Color4(amt, amt, amt, 1f);
         public static Color4 Gray(byte amt) => new Color4(amt, amt, amt, 255);
 
+        /// <summary>
+        /// Retrieves the colour for a <see cref="DifficultyRating"/>.
+        /// </summary>
+        /// <remarks>
+        /// Sourced from the @diff-{rating} variables in https://github.com/ppy/osu-web/blob/71fbab8936d79a7929d13854f5e854b4f383b236/resources/assets/less/variables.less.
+        /// </remarks>
         public Color4 ForDifficultyRating(DifficultyRating difficulty, bool useLighterColour = false)
         {
             switch (difficulty)
             {
                 case DifficultyRating.Easy:
-                    return Green;
+                    return Color4Extensions.FromHex("4ebfff");
 
-                default:
                 case DifficultyRating.Normal:
-                    return Blue;
+                    return Color4Extensions.FromHex("66ff91");
 
                 case DifficultyRating.Hard:
-                    return Yellow;
+                    return Color4Extensions.FromHex("f7e85d");
 
                 case DifficultyRating.Insane:
-                    return Pink;
+                    return Color4Extensions.FromHex("ff7e68");
 
                 case DifficultyRating.Expert:
-                    return useLighterColour ? PurpleLight : Purple;
+                    return Color4Extensions.FromHex("fe3c71");
 
                 case DifficultyRating.ExpertPlus:
-                    return useLighterColour ? Gray9 : Gray0;
+                    return Color4Extensions.FromHex("6662dd");
+
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(difficulty));
             }
         }
+
+        public Color4 ForStarDifficulty(double starDifficulty) => ColourUtils.SampleFromLinearGradient(new[]
+        {
+            (0.1f, Color4Extensions.FromHex("aaaaaa")),
+            (0.1f, Color4Extensions.FromHex("4290fb")),
+            (1.25f, Color4Extensions.FromHex("4fc0ff")),
+            (2.0f, Color4Extensions.FromHex("4fffd5")),
+            (2.5f, Color4Extensions.FromHex("7cff4f")),
+            (3.3f, Color4Extensions.FromHex("f6f05c")),
+            (4.2f, Color4Extensions.FromHex("ff8068")),
+            (4.9f, Color4Extensions.FromHex("ff4e6f")),
+            (5.8f, Color4Extensions.FromHex("c645b8")),
+            (6.7f, Color4Extensions.FromHex("6563de")),
+            (7.7f, Color4Extensions.FromHex("18158e")),
+            (9.0f, Color4.Black),
+        }, (float)Math.Round(starDifficulty, 2, MidpointRounding.AwayFromZero));
 
         /// <summary>
         /// Retrieves the colour for a <see cref="ScoreRank"/>.
@@ -95,6 +122,42 @@ namespace osu.Game.Graphics
         }
 
         /// <summary>
+        /// Retrieves a colour for the given <see cref="BeatmapOnlineStatus"/>.
+        /// A <see langword="null"/> value indicates that a "background" shade from the local <see cref="OverlayColourProvider"/>
+        /// (or another fallback colour) should be used.
+        /// </summary>
+        /// <remarks>
+        /// Sourced from web: https://github.com/ppy/osu-web/blob/007eebb1916ed5cb6a7866d82d8011b1060a945e/resources/assets/less/layout.less#L36-L50
+        /// </remarks>
+        public static Color4? ForBeatmapSetOnlineStatus(BeatmapOnlineStatus status)
+        {
+            switch (status)
+            {
+                case BeatmapOnlineStatus.Ranked:
+                case BeatmapOnlineStatus.Approved:
+                    return Color4Extensions.FromHex(@"b3ff66");
+
+                case BeatmapOnlineStatus.Loved:
+                    return Color4Extensions.FromHex(@"ff66ab");
+
+                case BeatmapOnlineStatus.Qualified:
+                    return Color4Extensions.FromHex(@"66ccff");
+
+                case BeatmapOnlineStatus.Pending:
+                    return Color4Extensions.FromHex(@"ffd966");
+
+                case BeatmapOnlineStatus.WIP:
+                    return Color4Extensions.FromHex(@"ff9966");
+
+                case BeatmapOnlineStatus.Graveyard:
+                    return Color4.Black;
+
+                default:
+                    return null;
+            }
+        }
+
+        /// <summary>
         /// Returns a foreground text colour that is supposed to contrast well with
         /// the supplied <paramref name="backgroundColour"/>.
         /// </summary>
@@ -105,6 +168,9 @@ namespace osu.Game.Graphics
             float brightness = 0.299f * backgroundColour.R + 0.587f * backgroundColour.G + 0.114f * backgroundColour.B;
             return Gray(brightness > 0.5f ? 0.2f : 0.9f);
         }
+
+        public readonly Color4 TeamColourRed = Color4Extensions.FromHex("#AA1414");
+        public readonly Color4 TeamColourBlue = Color4Extensions.FromHex("#1462AA");
 
         // See https://github.com/ppy/osu-web/blob/master/resources/assets/less/colors.less
         public readonly Color4 PurpleLighter = Color4Extensions.FromHex(@"eeeeff");
@@ -146,12 +212,12 @@ namespace osu.Game.Graphics
         public readonly Color4 GreySkyDark = Color4Extensions.FromHex(@"303d47");
         public readonly Color4 GreySkyDarker = Color4Extensions.FromHex(@"21272c");
 
-        public readonly Color4 Seafoam = Color4Extensions.FromHex(@"05ffa2");
-        public readonly Color4 GreySeafoamLighter = Color4Extensions.FromHex(@"9ebab1");
-        public readonly Color4 GreySeafoamLight = Color4Extensions.FromHex(@"4d7365");
-        public readonly Color4 GreySeafoam = Color4Extensions.FromHex(@"33413c");
-        public readonly Color4 GreySeafoamDark = Color4Extensions.FromHex(@"2c3532");
-        public readonly Color4 GreySeafoamDarker = Color4Extensions.FromHex(@"1e2422");
+        public readonly Color4 SeaFoam = Color4Extensions.FromHex(@"05ffa2");
+        public readonly Color4 GreySeaFoamLighter = Color4Extensions.FromHex(@"9ebab1");
+        public readonly Color4 GreySeaFoamLight = Color4Extensions.FromHex(@"4d7365");
+        public readonly Color4 GreySeaFoam = Color4Extensions.FromHex(@"33413c");
+        public readonly Color4 GreySeaFoamDark = Color4Extensions.FromHex(@"2c3532");
+        public readonly Color4 GreySeaFoamDarker = Color4Extensions.FromHex(@"1e2422");
 
         public readonly Color4 Cyan = Color4Extensions.FromHex(@"05f4fd");
         public readonly Color4 GreyCyanLighter = Color4Extensions.FromHex(@"77b1b3");
@@ -198,8 +264,31 @@ namespace osu.Game.Graphics
         public readonly Color4 GrayE = Color4Extensions.FromHex(@"eee");
         public readonly Color4 GrayF = Color4Extensions.FromHex(@"fff");
 
-        // in latest editor design logic, need to figure out where these sit...
+        /// <summary>
+        /// Equivalent to <see cref="OverlayColourProvider.Pink"/>'s <see cref="OverlayColourProvider.Colour3"/>.
+        /// </summary>
+        public readonly Color4 Pink3 = Color4Extensions.FromHex(@"cc3378");
+
+        /// <summary>
+        /// Equivalent to <see cref="OverlayColourProvider.Blue"/>'s <see cref="OverlayColourProvider.Colour3"/>.
+        /// </summary>
+        public readonly Color4 Blue3 = Color4Extensions.FromHex(@"3399cc");
+
+        public readonly Color4 Lime0 = Color4Extensions.FromHex(@"ccff99");
+
+        /// <summary>
+        /// Equivalent to <see cref="OverlayColourProvider.Lime"/>'s <see cref="OverlayColourProvider.Colour1"/>.
+        /// </summary>
         public readonly Color4 Lime1 = Color4Extensions.FromHex(@"b2ff66");
+
+        /// <summary>
+        /// Equivalent to <see cref="OverlayColourProvider.Lime"/>'s <see cref="OverlayColourProvider.Colour3"/>.
+        /// </summary>
+        public readonly Color4 Lime3 = Color4Extensions.FromHex(@"7fcc33");
+
+        /// <summary>
+        /// Equivalent to <see cref="OverlayColourProvider.Orange"/>'s <see cref="OverlayColourProvider.Colour1"/>.
+        /// </summary>
         public readonly Color4 Orange1 = Color4Extensions.FromHex(@"ffd966");
 
         // Content Background

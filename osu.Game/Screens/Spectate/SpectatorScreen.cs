@@ -5,20 +5,19 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Threading.Tasks;
 using JetBrains.Annotations;
 using osu.Framework.Allocation;
 using osu.Framework.Bindables;
+using osu.Framework.Extensions;
 using osu.Framework.Extensions.ObjectExtensions;
 using osu.Game.Beatmaps;
 using osu.Game.Database;
+using osu.Game.Online.API.Requests.Responses;
 using osu.Game.Online.Spectator;
 using osu.Game.Replays;
 using osu.Game.Rulesets;
-using osu.Game.Rulesets.Replays;
-using osu.Game.Rulesets.Replays.Types;
 using osu.Game.Scoring;
-using osu.Game.Users;
+using Realms;
 
 namespace osu.Game.Screens.Spectate
 {
@@ -27,9 +26,9 @@ namespace osu.Game.Screens.Spectate
     /// </summary>
     public abstract class SpectatorScreen : OsuScreen
     {
-        protected IReadOnlyList<int> UserIds => userIds;
+        protected IReadOnlyList<int> Users => users;
 
-        private readonly List<int> userIds = new List<int>();
+        private readonly List<int> users = new List<int>();
 
         [Resolved]
         private BeatmapManager beatmaps { get; set; }
@@ -45,71 +44,65 @@ namespace osu.Game.Screens.Spectate
 
         private readonly IBindableDictionary<int, SpectatorState> playingUserStates = new BindableDictionary<int, SpectatorState>();
 
-        private readonly Dictionary<int, User> userMap = new Dictionary<int, User>();
-        private readonly Dictionary<int, GameplayState> gameplayStates = new Dictionary<int, GameplayState>();
-
-        private IBindable<WeakReference<BeatmapSetInfo>> managerUpdated;
+        private readonly Dictionary<int, APIUser> userMap = new Dictionary<int, APIUser>();
+        private readonly Dictionary<int, SpectatorGameplayState> gameplayStates = new Dictionary<int, SpectatorGameplayState>();
 
         /// <summary>
         /// Creates a new <see cref="SpectatorScreen"/>.
         /// </summary>
-        /// <param name="userIds">The users to spectate.</param>
-        protected SpectatorScreen(params int[] userIds)
+        /// <param name="users">The users to spectate.</param>
+        protected SpectatorScreen(params int[] users)
         {
-            this.userIds.AddRange(userIds);
+            this.users.AddRange(users);
         }
+
+        [Resolved]
+        private RealmAccess realm { get; set; }
+
+        private IDisposable realmSubscription;
 
         protected override void LoadComplete()
         {
             base.LoadComplete();
 
-            getAllUsers().ContinueWith(users => Schedule(() =>
+            userLookupCache.GetUsersAsync(users.ToArray()).ContinueWith(task => Schedule(() =>
             {
-                foreach (var u in users.Result)
+                var foundUsers = task.GetResultSafely();
+
+                foreach (var u in foundUsers)
+                {
+                    if (u == null)
+                        continue;
+
                     userMap[u.Id] = u;
+                }
 
                 playingUserStates.BindTo(spectatorClient.PlayingUserStates);
                 playingUserStates.BindCollectionChanged(onPlayingUserStatesChanged, true);
 
-                spectatorClient.OnNewFrames += userSentFrames;
+                realmSubscription = realm.RegisterForNotifications(
+                    realm => realm.All<BeatmapSetInfo>().Where(s => !s.DeletePending), beatmapsChanged);
 
-                managerUpdated = beatmaps.ItemUpdated.GetBoundCopy();
-                managerUpdated.BindValueChanged(beatmapUpdated);
-
-                foreach (var (id, _) in userMap)
+                foreach ((int id, var _) in userMap)
                     spectatorClient.WatchUser(id);
             }));
         }
 
-        private Task<User[]> getAllUsers()
+        private void beatmapsChanged(IRealmCollection<BeatmapSetInfo> items, ChangeSet changes, Exception ___)
         {
-            var userLookupTasks = new List<Task<User>>();
+            if (changes?.InsertedIndices == null) return;
 
-            foreach (var u in userIds)
-            {
-                userLookupTasks.Add(userLookupCache.GetUserAsync(u).ContinueWith(task =>
-                {
-                    if (!task.IsCompletedSuccessfully)
-                        return null;
-
-                    return task.Result;
-                }));
-            }
-
-            return Task.WhenAll(userLookupTasks);
+            foreach (int c in changes.InsertedIndices) beatmapUpdated(items[c]);
         }
 
-        private void beatmapUpdated(ValueChangedEvent<WeakReference<BeatmapSetInfo>> e)
+        private void beatmapUpdated(BeatmapSetInfo beatmapSet)
         {
-            if (!e.NewValue.TryGetTarget(out var beatmapSet))
-                return;
-
-            foreach (var (userId, _) in userMap)
+            foreach ((int userId, _) in userMap)
             {
                 if (!playingUserStates.TryGetValue(userId, out var userState))
                     continue;
 
-                if (beatmapSet.Beatmaps.Any(b => b.OnlineBeatmapID == userState.BeatmapID))
+                if (beatmapSet.Beatmaps.Any(b => b.OnlineID == userState.BeatmapID))
                     updateGameplayState(userId);
             }
         }
@@ -119,20 +112,20 @@ namespace osu.Game.Screens.Spectate
             switch (e.Action)
             {
                 case NotifyDictionaryChangedAction.Add:
-                    foreach (var (userId, state) in e.NewItems.AsNonNull())
+                    foreach ((int userId, var state) in e.NewItems.AsNonNull())
                         onUserStateAdded(userId, state);
                     break;
 
                 case NotifyDictionaryChangedAction.Remove:
-                    foreach (var (userId, _) in e.OldItems.AsNonNull())
+                    foreach ((int userId, var _) in e.OldItems.AsNonNull())
                         onUserStateRemoved(userId);
                     break;
 
                 case NotifyDictionaryChangedAction.Replace:
-                    foreach (var (userId, _) in e.OldItems.AsNonNull())
+                    foreach ((int userId, var _) in e.OldItems.AsNonNull())
                         onUserStateRemoved(userId);
 
-                    foreach (var (userId, state) in e.NewItems.AsNonNull())
+                    foreach ((int userId, var state) in e.NewItems.AsNonNull())
                         onUserStateAdded(userId, state);
                     break;
             }
@@ -171,11 +164,11 @@ namespace osu.Game.Screens.Spectate
             var user = userMap[userId];
             var spectatorState = playingUserStates[userId];
 
-            var resolvedRuleset = rulesets.AvailableRulesets.FirstOrDefault(r => r.ID == spectatorState.RulesetID)?.CreateInstance();
+            var resolvedRuleset = rulesets.AvailableRulesets.FirstOrDefault(r => r.OnlineID == spectatorState.RulesetID)?.CreateInstance();
             if (resolvedRuleset == null)
                 return;
 
-            var resolvedBeatmap = beatmaps.QueryBeatmap(b => b.OnlineBeatmapID == spectatorState.BeatmapID);
+            var resolvedBeatmap = beatmaps.QueryBeatmap(b => b.OnlineID == spectatorState.BeatmapID);
             if (resolvedBeatmap == null)
                 return;
 
@@ -183,7 +176,7 @@ namespace osu.Game.Screens.Spectate
             {
                 ScoreInfo = new ScoreInfo
                 {
-                    Beatmap = resolvedBeatmap,
+                    BeatmapInfo = resolvedBeatmap,
                     User = user,
                     Mods = spectatorState.Mods.Select(m => m.ToMod(resolvedRuleset)).ToArray(),
                     Ruleset = resolvedRuleset.RulesetInfo,
@@ -191,33 +184,10 @@ namespace osu.Game.Screens.Spectate
                 Replay = new Replay { HasReceivedAllFrames = false },
             };
 
-            var gameplayState = new GameplayState(score, resolvedRuleset, beatmaps.GetWorkingBeatmap(resolvedBeatmap));
+            var gameplayState = new SpectatorGameplayState(score, resolvedRuleset, beatmaps.GetWorkingBeatmap(resolvedBeatmap));
 
             gameplayStates[userId] = gameplayState;
             Schedule(() => StartGameplay(userId, gameplayState));
-        }
-
-        private void userSentFrames(int userId, FrameDataBundle bundle)
-        {
-            if (!userMap.ContainsKey(userId))
-                return;
-
-            if (!gameplayStates.TryGetValue(userId, out var gameplayState))
-                return;
-
-            // The ruleset instance should be guaranteed to be in sync with the score via ScoreLock.
-            Debug.Assert(gameplayState.Ruleset != null && gameplayState.Ruleset.RulesetInfo.Equals(gameplayState.Score.ScoreInfo.Ruleset));
-
-            foreach (var frame in bundle.Frames)
-            {
-                IConvertibleReplayFrame convertibleFrame = gameplayState.Ruleset.CreateConvertibleReplayFrame();
-                convertibleFrame.FromLegacy(frame, gameplayState.Beatmap.Beatmap);
-
-                var convertedFrame = (ReplayFrame)convertibleFrame;
-                convertedFrame.Time = frame.Time;
-
-                gameplayState.Score.Replay.Frames.Add(convertedFrame);
-            }
         }
 
         /// <summary>
@@ -231,8 +201,8 @@ namespace osu.Game.Screens.Spectate
         /// Starts gameplay for a user.
         /// </summary>
         /// <param name="userId">The user to start gameplay for.</param>
-        /// <param name="gameplayState">The gameplay state.</param>
-        protected abstract void StartGameplay(int userId, [NotNull] GameplayState gameplayState);
+        /// <param name="spectatorGameplayState">The gameplay state.</param>
+        protected abstract void StartGameplay(int userId, [NotNull] SpectatorGameplayState spectatorGameplayState);
 
         /// <summary>
         /// Ends gameplay for a user.
@@ -248,7 +218,7 @@ namespace osu.Game.Screens.Spectate
         {
             onUserStateRemoved(userId);
 
-            userIds.Remove(userId);
+            users.Remove(userId);
             userMap.Remove(userId);
 
             spectatorClient.StopWatchingUser(userId);
@@ -260,13 +230,11 @@ namespace osu.Game.Screens.Spectate
 
             if (spectatorClient != null)
             {
-                spectatorClient.OnNewFrames -= userSentFrames;
-
-                foreach (var (userId, _) in userMap)
+                foreach ((int userId, var _) in userMap)
                     spectatorClient.StopWatchingUser(userId);
             }
 
-            managerUpdated?.UnbindAll();
+            realmSubscription?.Dispose();
         }
     }
 }

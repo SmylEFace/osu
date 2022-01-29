@@ -4,7 +4,7 @@
 using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
-using osu.Game.Users;
+using osu.Game.Online.API.Requests.Responses;
 
 namespace osu.Game.Online.Chat
 {
@@ -26,7 +26,7 @@ namespace osu.Game.Online.Chat
         public string Content;
 
         [JsonProperty(@"sender")]
-        public User Sender;
+        public APIUser Sender;
 
         [JsonConstructor]
         public Message()
@@ -63,5 +63,7 @@ namespace osu.Game.Online.Chat
 
         // ReSharper disable once ImpureMethodCallOnReadonlyValueField
         public override int GetHashCode() => Id.GetHashCode();
+
+        public override string ToString() => $"[{ChannelId}] ({Id}) {Sender}: {Content}";
     }
 }

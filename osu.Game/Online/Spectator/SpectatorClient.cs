@@ -15,8 +15,6 @@ using osu.Framework.Graphics;
 using osu.Game.Beatmaps;
 using osu.Game.Online.API;
 using osu.Game.Replays.Legacy;
-using osu.Game.Rulesets;
-using osu.Game.Rulesets.Mods;
 using osu.Game.Rulesets.Replays;
 using osu.Game.Rulesets.Replays.Types;
 using osu.Game.Scoring;
@@ -46,14 +44,7 @@ namespace osu.Game.Online.Spectator
         private readonly BindableDictionary<int, SpectatorState> playingUserStates = new BindableDictionary<int, SpectatorState>();
 
         private IBeatmap? currentBeatmap;
-
         private Score? currentScore;
-
-        [Resolved]
-        private IBindable<RulesetInfo> currentRuleset { get; set; } = null!;
-
-        [Resolved]
-        private IBindable<IReadOnlyList<Mod>> currentMods { get; set; } = null!;
 
         private readonly SpectatorState currentState = new SpectatorState();
 
@@ -89,7 +80,7 @@ namespace osu.Game.Online.Spectator
                     watchingUsers.Clear();
 
                     // resubscribe to watched users.
-                    foreach (var userId in users)
+                    foreach (int userId in users)
                         WatchUser(userId);
 
                     // re-send state in case it wasn't received
@@ -143,32 +134,34 @@ namespace osu.Game.Online.Spectator
             return Task.CompletedTask;
         }
 
-        public void BeginPlaying(GameplayBeatmap beatmap, Score score)
+        public void BeginPlaying(GameplayState state, Score score)
         {
-            Debug.Assert(ThreadSafety.IsUpdateThread);
+            // This schedule is only here to match the one below in `EndPlaying`.
+            Schedule(() =>
+            {
+                if (IsPlaying)
+                    throw new InvalidOperationException($"Cannot invoke {nameof(BeginPlaying)} when already playing");
 
-            if (IsPlaying)
-                throw new InvalidOperationException($"Cannot invoke {nameof(BeginPlaying)} when already playing");
+                IsPlaying = true;
 
-            IsPlaying = true;
+                // transfer state at point of beginning play
+                currentState.BeatmapID = score.ScoreInfo.BeatmapInfo.OnlineID;
+                currentState.RulesetID = score.ScoreInfo.RulesetID;
+                currentState.Mods = score.ScoreInfo.Mods.Select(m => new APIMod(m)).ToArray();
 
-            // transfer state at point of beginning play
-            currentState.BeatmapID = beatmap.BeatmapInfo.OnlineBeatmapID;
-            currentState.RulesetID = currentRuleset.Value.ID;
-            currentState.Mods = currentMods.Value.Select(m => new APIMod(m));
+                currentBeatmap = state.Beatmap;
+                currentScore = score;
 
-            currentBeatmap = beatmap.PlayableBeatmap;
-            currentScore = score;
-
-            BeginPlayingInternal(currentState);
+                BeginPlayingInternal(currentState);
+            });
         }
 
         public void SendFrames(FrameDataBundle data) => lastSend = SendFramesInternal(data);
 
         public void EndPlaying()
         {
-            // This method is most commonly called via Dispose(), which is asynchronous.
-            // Todo: This should not be a thing, but requires framework changes.
+            // This method is most commonly called via Dispose(), which is can be asynchronous (via the AsyncDisposalQueue).
+            // We probably need to find a better way to handle this...
             Schedule(() =>
             {
                 if (!IsPlaying)

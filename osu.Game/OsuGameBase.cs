@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using osu.Framework.Allocation;
 using osu.Framework.Audio;
 using osu.Framework.Bindables;
@@ -13,23 +14,23 @@ using osu.Framework.Development;
 using osu.Framework.Extensions;
 using osu.Framework.Graphics;
 using osu.Framework.Graphics.Containers;
-using osu.Framework.IO.Stores;
-using osu.Framework.Platform;
-using osu.Game.Beatmaps;
-using osu.Game.Configuration;
-using osu.Game.Graphics;
-using osu.Game.Graphics.Cursor;
-using osu.Game.Online.API;
 using osu.Framework.Graphics.Performance;
 using osu.Framework.Graphics.Textures;
 using osu.Framework.Input;
+using osu.Framework.IO.Stores;
 using osu.Framework.Logging;
+using osu.Framework.Platform;
 using osu.Game.Audio;
+using osu.Game.Beatmaps;
+using osu.Game.Configuration;
 using osu.Game.Database;
+using osu.Game.Graphics;
+using osu.Game.Graphics.Cursor;
 using osu.Game.Input;
 using osu.Game.Input.Bindings;
 using osu.Game.IO;
 using osu.Game.Online;
+using osu.Game.Online.API;
 using osu.Game.Online.Chat;
 using osu.Game.Online.Multiplayer;
 using osu.Game.Online.Spectator;
@@ -56,9 +57,14 @@ namespace osu.Game
         public const int SAMPLE_CONCURRENCY = 6;
 
         /// <summary>
+        /// Length of debounce (in milliseconds) for commonly occuring sample playbacks that could stack.
+        /// </summary>
+        public const int SAMPLE_DEBOUNCE_TIME = 20;
+
+        /// <summary>
         /// The maximum volume at which audio tracks should playback. This can be set lower than 1 to create some head-room for sound effects.
         /// </summary>
-        internal const double GLOBAL_TRACK_VOLUME_ADJUST = 0.5;
+        private const double global_track_volume_adjust = 0.8;
 
         public bool UseDevelopmentServer { get; }
 
@@ -79,7 +85,7 @@ namespace osu.Game
                     return @"local " + (DebugUtils.IsDebugBuild ? @"debug" : @"release");
 
                 var version = AssemblyVersion;
-                return $@"{version.Major}.{version.Minor}.{version.Build}";
+                return $@"{version.Major}.{version.Minor}.{version.Build}-lazer";
             }
         }
 
@@ -89,13 +95,17 @@ namespace osu.Game
 
         protected BeatmapManager BeatmapManager { get; private set; }
 
+        protected BeatmapModelDownloader BeatmapDownloader { get; private set; }
+
         protected ScoreManager ScoreManager { get; private set; }
+
+        protected ScoreModelDownloader ScoreDownloader { get; private set; }
 
         protected SkinManager SkinManager { get; private set; }
 
         protected RulesetStore RulesetStore { get; private set; }
 
-        protected KeyBindingStore KeyBindingStore { get; private set; }
+        protected RealmKeyBindingStore KeyBindingStore { get; private set; }
 
         protected MenuCursorContainer MenuCursorContainer { get; private set; }
 
@@ -131,10 +141,7 @@ namespace osu.Game
         private BeatmapDifficultyCache difficultyCache;
 
         private UserLookupCache userCache;
-
-        private FileStore fileStore;
-
-        private SettingsStore settingsStore;
+        private BeatmapLookupCache beatmapCache;
 
         private RulesetConfigCache rulesetConfigCache;
 
@@ -142,7 +149,7 @@ namespace osu.Game
 
         private MultiplayerClient multiplayerClient;
 
-        private DatabaseContextFactory contextFactory;
+        private RealmAccess realm;
 
         protected override Container<Drawable> Content => content;
 
@@ -152,16 +159,21 @@ namespace osu.Game
 
         private Bindable<bool> fpsDisplayVisible;
 
-        private readonly BindableNumber<double> globalTrackVolumeAdjust = new BindableNumber<double>(GLOBAL_TRACK_VOLUME_ADJUST);
+        private readonly BindableNumber<double> globalTrackVolumeAdjust = new BindableNumber<double>(global_track_volume_adjust);
+
+        /// <summary>
+        /// A legacy EF context factory if migration has not been performed to realm yet.
+        /// </summary>
+        protected DatabaseContextFactory EFContextFactory { get; private set; }
 
         public OsuGameBase()
         {
             UseDevelopmentServer = DebugUtils.IsDebugBuild;
-            Name = @"osu!lazer";
+            Name = @"osu!";
         }
 
         [BackgroundDependencyLoader]
-        private void load()
+        private void load(ReadableKeyCombinationProvider keyCombinationProvider)
         {
             try
             {
@@ -177,7 +189,35 @@ namespace osu.Game
 
             Resources.AddStore(new DllResourceStore(OsuResources.ResourceAssembly));
 
-            dependencies.Cache(contextFactory = new DatabaseContextFactory(Storage));
+            if (Storage.Exists(DatabaseContextFactory.DATABASE_NAME))
+                dependencies.Cache(EFContextFactory = new DatabaseContextFactory(Storage));
+
+            dependencies.Cache(realm = new RealmAccess(Storage, "client", EFContextFactory));
+
+            dependencies.Cache(RulesetStore = new RulesetStore(realm, Storage));
+            dependencies.CacheAs<IRulesetStore>(RulesetStore);
+
+            // Backup is taken here rather than in EFToRealmMigrator to avoid recycling realm contexts
+            // after initial usages below. It can be moved once a direction is established for handling re-subscription.
+            // See https://github.com/ppy/osu/pull/16547 for more discussion.
+            if (EFContextFactory != null)
+            {
+                const string backup_folder = "backups";
+
+                string migration = $"before_final_migration_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+
+                EFContextFactory.CreateBackup(Path.Combine(backup_folder, $"client.{migration}.db"));
+                realm.CreateBackup(Path.Combine(backup_folder, $"client.{migration}.realm"));
+
+                using (var source = Storage.GetStream("collection.db"))
+                {
+                    if (source != null)
+                    {
+                        using (var destination = Storage.GetStream(Path.Combine(backup_folder, $"collection.{migration}.db"), FileAccess.Write, FileMode.CreateNew))
+                            source.CopyTo(destination);
+                    }
+                }
+            }
 
             dependencies.CacheAs(Storage);
 
@@ -188,43 +228,12 @@ namespace osu.Game
             dependencies.CacheAs(this);
             dependencies.CacheAs(LocalConfig);
 
-            AddFont(Resources, @"Fonts/osuFont");
-
-            AddFont(Resources, @"Fonts/Torus-Regular");
-            AddFont(Resources, @"Fonts/Torus-Light");
-            AddFont(Resources, @"Fonts/Torus-SemiBold");
-            AddFont(Resources, @"Fonts/Torus-Bold");
-
-            AddFont(Resources, @"Fonts/Noto-Basic");
-            AddFont(Resources, @"Fonts/Noto-Hangul");
-            AddFont(Resources, @"Fonts/Noto-CJK-Basic");
-            AddFont(Resources, @"Fonts/Noto-CJK-Compatibility");
-            AddFont(Resources, @"Fonts/Noto-Thai");
-
-            AddFont(Resources, @"Fonts/Venera-Light");
-            AddFont(Resources, @"Fonts/Venera-Bold");
-            AddFont(Resources, @"Fonts/Venera-Black");
+            InitialiseFonts();
 
             Audio.Samples.PlaybackConcurrency = SAMPLE_CONCURRENCY;
 
-            runMigrations();
-
-            dependencies.Cache(SkinManager = new SkinManager(Storage, contextFactory, Host, Resources, Audio));
+            dependencies.Cache(SkinManager = new SkinManager(Storage, realm, Host, Resources, Audio, Scheduler));
             dependencies.CacheAs<ISkinSource>(SkinManager);
-
-            // needs to be done here rather than inside SkinManager to ensure thread safety of CurrentSkinInfo.
-            SkinManager.ItemRemoved.BindValueChanged(weakRemovedInfo =>
-            {
-                if (weakRemovedInfo.NewValue.TryGetTarget(out var removedInfo))
-                {
-                    Schedule(() =>
-                    {
-                        // check the removed skin is not the current user choice. if it is, switch back to default.
-                        if (removedInfo.ID == SkinManager.CurrentSkinInfo.Value.ID)
-                            SkinManager.CurrentSkinInfo.Value = SkinInfo.Default;
-                    });
-                }
-            });
 
             EndpointConfiguration endpoints = UseDevelopmentServer ? (EndpointConfiguration)new DevelopmentEndpointConfiguration() : new ProductionEndpointConfiguration();
 
@@ -237,33 +246,12 @@ namespace osu.Game
 
             var defaultBeatmap = new DummyWorkingBeatmap(Audio, Textures);
 
-            dependencies.Cache(RulesetStore = new RulesetStore(contextFactory, Storage));
-            dependencies.Cache(fileStore = new FileStore(contextFactory, Storage));
-
             // ordering is important here to ensure foreign keys rules are not broken in ModelStore.Cleanup()
-            dependencies.Cache(ScoreManager = new ScoreManager(RulesetStore, () => BeatmapManager, Storage, API, contextFactory, Host, () => difficultyCache, LocalConfig));
-            dependencies.Cache(BeatmapManager = new BeatmapManager(Storage, contextFactory, RulesetStore, API, Audio, Resources, Host, defaultBeatmap, true));
+            dependencies.Cache(ScoreManager = new ScoreManager(RulesetStore, () => BeatmapManager, Storage, realm, Scheduler, Host, () => difficultyCache, LocalConfig));
+            dependencies.Cache(BeatmapManager = new BeatmapManager(Storage, realm, RulesetStore, API, Audio, Resources, Host, defaultBeatmap, performOnlineLookups: true));
 
-            // this should likely be moved to ArchiveModelManager when another case appers where it is necessary
-            // to have inter-dependent model managers. this could be obtained with an IHasForeign<T> interface to
-            // allow lookups to be done on the child (ScoreManager in this case) to perform the cascading delete.
-            List<ScoreInfo> getBeatmapScores(BeatmapSetInfo set)
-            {
-                var beatmapIds = BeatmapManager.QueryBeatmaps(b => b.BeatmapSetInfoID == set.ID).Select(b => b.ID).ToList();
-                return ScoreManager.QueryScores(s => beatmapIds.Contains(s.Beatmap.ID)).ToList();
-            }
-
-            BeatmapManager.ItemRemoved.BindValueChanged(i =>
-            {
-                if (i.NewValue.TryGetTarget(out var item))
-                    ScoreManager.Delete(getBeatmapScores(item), true);
-            });
-
-            BeatmapManager.ItemUpdated.BindValueChanged(i =>
-            {
-                if (i.NewValue.TryGetTarget(out var item))
-                    ScoreManager.Undelete(getBeatmapScores(item), true);
-            });
+            dependencies.Cache(BeatmapDownloader = new BeatmapModelDownloader(BeatmapManager, API));
+            dependencies.Cache(ScoreDownloader = new ScoreModelDownloader(ScoreManager, API));
 
             dependencies.Cache(difficultyCache = new BeatmapDifficultyCache());
             AddInternal(difficultyCache);
@@ -271,13 +259,14 @@ namespace osu.Game
             dependencies.Cache(userCache = new UserLookupCache());
             AddInternal(userCache);
 
+            dependencies.Cache(beatmapCache = new BeatmapLookupCache());
+            AddInternal(beatmapCache);
+
             var scorePerformanceManager = new ScorePerformanceCache();
             dependencies.Cache(scorePerformanceManager);
             AddInternal(scorePerformanceManager);
 
-            dependencies.Cache(KeyBindingStore = new KeyBindingStore(contextFactory, RulesetStore));
-            dependencies.Cache(settingsStore = new SettingsStore(contextFactory));
-            dependencies.Cache(rulesetConfigCache = new RulesetConfigCache(settingsStore));
+            dependencies.CacheAs<IRulesetConfigCache>(rulesetConfigCache = new RulesetConfigCache(realm, RulesetStore));
 
             var powerStatus = CreateBatteryInfo();
             if (powerStatus != null)
@@ -300,8 +289,6 @@ namespace osu.Game
             dependencies.CacheAs<IBindable<WorkingBeatmap>>(Beatmap);
             dependencies.CacheAs(Beatmap);
 
-            fileStore.Cleanup();
-
             // add api components to hierarchy.
             if (API is APIAccess apiAccess)
                 AddInternal(apiAccess);
@@ -323,17 +310,54 @@ namespace osu.Game
 
             base.Content.Add(CreateScalingContainer().WithChildren(mainContent));
 
-            KeyBindingStore.Register(globalBindings);
+            KeyBindingStore = new RealmKeyBindingStore(realm, keyCombinationProvider);
+            KeyBindingStore.Register(globalBindings, RulesetStore.AvailableRulesets);
+
             dependencies.Cache(globalBindings);
 
             PreviewTrackManager previewTrackManager;
-            dependencies.Cache(previewTrackManager = new PreviewTrackManager());
+            dependencies.Cache(previewTrackManager = new PreviewTrackManager(BeatmapManager.BeatmapTrackStore));
             Add(previewTrackManager);
 
             AddInternal(MusicController = new MusicController());
             dependencies.CacheAs(MusicController);
 
             Ruleset.BindValueChanged(onRulesetChanged);
+            Beatmap.BindValueChanged(onBeatmapChanged);
+        }
+
+        protected virtual void InitialiseFonts()
+        {
+            AddFont(Resources, @"Fonts/osuFont");
+
+            AddFont(Resources, @"Fonts/Torus/Torus-Regular");
+            AddFont(Resources, @"Fonts/Torus/Torus-Light");
+            AddFont(Resources, @"Fonts/Torus/Torus-SemiBold");
+            AddFont(Resources, @"Fonts/Torus/Torus-Bold");
+
+            AddFont(Resources, @"Fonts/Torus-Alternate/Torus-Alternate-Regular");
+            AddFont(Resources, @"Fonts/Torus-Alternate/Torus-Alternate-Light");
+            AddFont(Resources, @"Fonts/Torus-Alternate/Torus-Alternate-SemiBold");
+            AddFont(Resources, @"Fonts/Torus-Alternate/Torus-Alternate-Bold");
+
+            AddFont(Resources, @"Fonts/Inter/Inter-Regular");
+            AddFont(Resources, @"Fonts/Inter/Inter-RegularItalic");
+            AddFont(Resources, @"Fonts/Inter/Inter-Light");
+            AddFont(Resources, @"Fonts/Inter/Inter-LightItalic");
+            AddFont(Resources, @"Fonts/Inter/Inter-SemiBold");
+            AddFont(Resources, @"Fonts/Inter/Inter-SemiBoldItalic");
+            AddFont(Resources, @"Fonts/Inter/Inter-Bold");
+            AddFont(Resources, @"Fonts/Inter/Inter-BoldItalic");
+
+            AddFont(Resources, @"Fonts/Noto/Noto-Basic");
+            AddFont(Resources, @"Fonts/Noto/Noto-Hangul");
+            AddFont(Resources, @"Fonts/Noto/Noto-CJK-Basic");
+            AddFont(Resources, @"Fonts/Noto/Noto-CJK-Compatibility");
+            AddFont(Resources, @"Fonts/Noto/Noto-Thai");
+
+            AddFont(Resources, @"Fonts/Venera/Venera-Light");
+            AddFont(Resources, @"Fonts/Venera/Venera-Bold");
+            AddFont(Resources, @"Fonts/Venera/Venera-Black");
         }
 
         protected override void LoadComplete()
@@ -378,8 +402,31 @@ namespace osu.Game
 
         public void Migrate(string path)
         {
-            contextFactory.FlushConnections();
-            (Storage as OsuStorage)?.Migrate(Host.GetStorage(path));
+            Logger.Log($@"Migrating osu! data from ""{Storage.GetFullPath(string.Empty)}"" to ""{path}""...");
+
+            IDisposable realmBlocker = null;
+
+            try
+            {
+                ManualResetEventSlim readyToRun = new ManualResetEventSlim();
+
+                Scheduler.Add(() =>
+                {
+                    realmBlocker = realm.BlockAllOperations();
+
+                    readyToRun.Set();
+                }, false);
+
+                readyToRun.Wait();
+
+                (Storage as OsuStorage)?.Migrate(Host.GetStorage(path));
+            }
+            finally
+            {
+                realmBlocker?.Dispose();
+            }
+
+            Logger.Log(@"Migration complete!");
         }
 
         protected override UserInputManager CreateUserInputManager() => new OsuUserInputManager();
@@ -390,43 +437,49 @@ namespace osu.Game
 
         protected override Storage CreateStorage(GameHost host, Storage defaultStorage) => new OsuStorage(host, defaultStorage);
 
+        private void onBeatmapChanged(ValueChangedEvent<WorkingBeatmap> valueChangedEvent)
+        {
+            if (IsLoaded && !ThreadSafety.IsUpdateThread)
+                throw new InvalidOperationException("Global beatmap bindable must be changed from update thread.");
+        }
+
         private void onRulesetChanged(ValueChangedEvent<RulesetInfo> r)
         {
+            if (IsLoaded && !ThreadSafety.IsUpdateThread)
+                throw new InvalidOperationException("Global ruleset bindable must be changed from update thread.");
+
+            Ruleset instance = null;
+
+            try
+            {
+                if (r.NewValue?.Available == true)
+                {
+                    instance = r.NewValue.CreateInstance();
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.Error(e, "Ruleset load failed and has been rolled back");
+            }
+
+            if (instance == null)
+            {
+                // reject the change if the ruleset is not available.
+                Ruleset.Value = r.OldValue?.Available == true ? r.OldValue : RulesetStore.AvailableRulesets.First();
+                return;
+            }
+
             var dict = new Dictionary<ModType, IReadOnlyList<Mod>>();
 
-            if (r.NewValue?.Available == true)
+            foreach (ModType type in Enum.GetValues(typeof(ModType)))
             {
-                foreach (ModType type in Enum.GetValues(typeof(ModType)))
-                    dict[type] = r.NewValue.CreateInstance().GetModsFor(type).ToList();
+                dict[type] = instance.GetModsFor(type).ToList();
             }
 
             if (!SelectedMods.Disabled)
                 SelectedMods.Value = Array.Empty<Mod>();
 
             AvailableMods.Value = dict;
-        }
-
-        private void runMigrations()
-        {
-            try
-            {
-                using (var db = contextFactory.GetForWrite(false))
-                    db.Context.Migrate();
-            }
-            catch (Exception e)
-            {
-                Logger.Error(e.InnerException ?? e, "Migration failed! We'll be starting with a fresh database.", LoggingTarget.Database);
-
-                // if we failed, let's delete the database and start fresh.
-                // todo: we probably want a better (non-destructive) migrations/recovery process at a later point than this.
-                contextFactory.ResetDatabase();
-
-                Logger.Log("Database purged successfully.", LoggingTarget.Database);
-
-                // only run once more, then hard bail.
-                using (var db = contextFactory.GetForWrite(false))
-                    db.Context.Migrate();
-            }
         }
 
         protected override void Dispose(bool isDisposing)
@@ -437,7 +490,7 @@ namespace osu.Game
             BeatmapManager?.Dispose();
             LocalConfig?.Dispose();
 
-            contextFactory.FlushConnections();
+            realm?.Dispose();
         }
     }
 }

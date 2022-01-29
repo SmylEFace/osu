@@ -19,7 +19,6 @@ using osu.Game.Rulesets.Objects;
 using osu.Game.Skinning;
 using osuTK;
 using System.Diagnostics;
-using osu.Framework.Audio.Sample;
 
 namespace osu.Game.Rulesets.UI
 {
@@ -87,9 +86,6 @@ namespace osu.Game.Rulesets.UI
 
         [Resolved(CanBeNull = true)]
         private IReadOnlyList<Mod> mods { get; set; }
-
-        [Resolved]
-        private ISampleStore sampleStore { get; set; }
 
         /// <summary>
         /// Creates a new <see cref="Playfield"/>.
@@ -356,8 +352,8 @@ namespace osu.Game.Rulesets.UI
                     // This is done before Apply() so that the state is updated once when the hitobject is applied.
                     if (mods != null)
                     {
-                        foreach (var m in mods.OfType<IApplicableToDrawableHitObjects>())
-                            m.ApplyToDrawableHitObjects(dho.Yield());
+                        foreach (var m in mods.OfType<IApplicableToDrawableHitObject>())
+                            m.ApplyToDrawableHitObject(dho);
                     }
                 }
 

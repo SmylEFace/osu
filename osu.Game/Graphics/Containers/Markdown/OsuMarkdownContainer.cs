@@ -30,9 +30,12 @@ namespace osu.Game.Graphics.Containers.Markdown
                     break;
 
                 case ListItemBlock listItemBlock:
-                    var isOrdered = ((ListBlock)listItemBlock.Parent).IsOrdered;
-                    var childContainer = CreateListItem(listItemBlock, level, isOrdered);
+                    bool isOrdered = ((ListBlock)listItemBlock.Parent)?.IsOrdered == true;
+
+                    OsuMarkdownListItem childContainer = CreateListItem(listItemBlock, level, isOrdered);
+
                     container.Add(childContainer);
+
                     foreach (var single in listItemBlock)
                         base.AddMarkdownComponent(single, childContainer.Content, level);
                     break;
@@ -45,7 +48,7 @@ namespace osu.Game.Graphics.Containers.Markdown
 
         public override SpriteText CreateSpriteText() => new OsuSpriteText
         {
-            Font = OsuFont.GetFont(size: 14),
+            Font = OsuFont.GetFont(Typeface.Inter, size: 14, weight: FontWeight.Regular),
         };
 
         public override MarkdownTextFlowContainer CreateTextFlow() => new OsuMarkdownTextFlowContainer();

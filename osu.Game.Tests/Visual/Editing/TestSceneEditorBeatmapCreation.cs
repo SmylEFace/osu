@@ -11,7 +11,9 @@ using osu.Framework.Testing;
 using osu.Game.Beatmaps;
 using osu.Game.Rulesets;
 using osu.Game.Rulesets.Osu;
+using osu.Game.Screens.Edit;
 using osu.Game.Screens.Edit.Setup;
+using osu.Game.Storyboards;
 using osu.Game.Tests.Resources;
 using SharpCompress.Archives;
 using SharpCompress.Archives.Zip;
@@ -38,26 +40,29 @@ namespace osu.Game.Tests.Visual.Editing
             AddStep("make new beatmap unique", () => EditorBeatmap.Metadata.Title = Guid.NewGuid().ToString());
         }
 
-        protected override void LoadEditor()
-        {
-            Beatmap.Value = new DummyWorkingBeatmap(Audio, null);
-            base.LoadEditor();
-        }
+        protected override WorkingBeatmap CreateWorkingBeatmap(IBeatmap beatmap, Storyboard storyboard = null) => new DummyWorkingBeatmap(Audio, null);
 
         [Test]
         public void TestCreateNewBeatmap()
         {
             AddStep("save beatmap", () => Editor.Save());
-            AddAssert("new beatmap persisted", () => EditorBeatmap.BeatmapInfo.ID > 0);
-            AddAssert("new beatmap in database", () => beatmapManager.QueryBeatmapSet(s => s.ID == EditorBeatmap.BeatmapInfo.BeatmapSet.ID)?.DeletePending == false);
+            AddAssert("new beatmap in database", () => beatmapManager.QueryBeatmapSet(s => s.ID == EditorBeatmap.BeatmapInfo.BeatmapSet.ID)?.Value.DeletePending == false);
         }
 
         [Test]
         public void TestExitWithoutSave()
         {
-            AddStep("exit without save", () => Editor.Exit());
+            EditorBeatmap editorBeatmap = null;
+
+            AddStep("store editor beatmap", () => editorBeatmap = EditorBeatmap);
+            AddStep("exit without save", () =>
+            {
+                Editor.Exit();
+                DialogOverlay.CurrentDialog.PerformOkAction();
+            });
+
             AddUntilStep("wait for exit", () => !Editor.IsCurrentScreen());
-            AddAssert("new beatmap not persisted", () => beatmapManager.QueryBeatmapSet(s => s.ID == EditorBeatmap.BeatmapInfo.BeatmapSet.ID)?.DeletePending == true);
+            AddAssert("new beatmap not persisted", () => beatmapManager.QueryBeatmapSet(s => s.ID == editorBeatmap.BeatmapInfo.BeatmapSet.ID)?.Value.DeletePending == true);
         }
 
         [Test]
@@ -67,7 +72,7 @@ namespace osu.Game.Tests.Visual.Editing
             {
                 var setup = Editor.ChildrenOfType<SetupScreen>().First();
 
-                var temp = TestResources.GetTestBeatmapForImport();
+                string temp = TestResources.GetTestBeatmapForImport();
 
                 string extractedFolder = $"{temp}_extracted";
                 Directory.CreateDirectory(extractedFolder);

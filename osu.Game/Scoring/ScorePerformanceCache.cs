@@ -34,17 +34,17 @@ namespace osu.Game.Scoring
         {
             var score = lookup.ScoreInfo;
 
-            var attributes = await difficultyCache.GetDifficultyAsync(score.Beatmap, score.Ruleset, score.Mods, token).ConfigureAwait(false);
+            var attributes = await difficultyCache.GetDifficultyAsync(score.BeatmapInfo, score.Ruleset, score.Mods, token).ConfigureAwait(false);
 
             // Performance calculation requires the beatmap and ruleset to be locally available. If not, return a default value.
-            if (attributes.Attributes == null)
+            if (attributes?.Attributes == null)
                 return null;
 
             token.ThrowIfCancellationRequested();
 
-            var calculator = score.Ruleset.CreateInstance().CreatePerformanceCalculator(attributes.Attributes, score);
+            var calculator = score.Ruleset.CreateInstance().CreatePerformanceCalculator(attributes.Value.Attributes, score);
 
-            return calculator?.Calculate();
+            return calculator?.Calculate().Total;
         }
 
         public readonly struct PerformanceCacheLookup
