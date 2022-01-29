@@ -16,11 +16,18 @@ namespace osu.Game.Screens.Play
     public class PauseOverlay : GameplayMenuOverlay
     {
         public Action OnResume;
+        private Random rand = new Random();
+        private string[] rd = new string[]
+        {
+            "testing string",
+            "syntax testing multiple index's",
+            "you're not going to do what i think you're going to do, are ya?"
+        };
 
         public override bool IsPresent => base.IsPresent || pauseLoop.IsPlaying;
 
         public override string Header => "paused";
-        public override string Description => "you're not going to do what i think you're going to do, are ya?";
+        public override string Description => rd[rand.Next(rd.Length)];
 
         private SkinnableSound pauseLoop;
 
