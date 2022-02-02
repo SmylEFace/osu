@@ -2,6 +2,7 @@
 // See the LICENCE file in the repository root for full licence text.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -417,7 +418,8 @@ namespace osu.Game.Screens.Play
                         RequestSkip = () => progressToResults(false),
                         Alpha = 0
                     },
-                    PauseOverlay = new PauseOverlay
+                    //generates Pause Overlay (predetermined) 
+                    PauseOverlay = new PauseOverlay("IF YOU SEE THIS SOMETHING BROKE")
                     {
                         OnResume = Resume,
                         Retries = RestartCount,
@@ -836,7 +838,15 @@ namespace osu.Game.Screens.Play
         /// </summary>
         private const double pause_cooldown = 1000;
 
+        private string[] desc =
+        {
+            "you can do it!",
+            "Bananas",
+            "Carrots"
+        };
         protected PauseOverlay PauseOverlay { get; private set; }
+        private Random r = new Random();
+
 
         private double? lastPauseActionTime;
 
@@ -866,6 +876,8 @@ namespace osu.Game.Screens.Play
 
         public bool Pause()
         {
+            PauseOverlay.SetDescription(desc[r.Next(desc.Length)]);
+
             if (!pausingSupportedByCurrentState) return false;
 
             if (!IsResuming && PauseCooldownActive)
@@ -878,6 +890,7 @@ namespace osu.Game.Screens.Play
             }
 
             GameplayClockContainer.Stop();
+
             PauseOverlay.Show();
             lastPauseActionTime = GameplayClockContainer.GameplayClock.CurrentTime;
             return true;

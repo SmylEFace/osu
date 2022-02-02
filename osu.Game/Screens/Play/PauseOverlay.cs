@@ -6,8 +6,10 @@ using System.Linq;
 using osu.Framework.Allocation;
 using osu.Framework.Audio;
 using osu.Framework.Graphics;
+using osu.Framework.Graphics.Containers;
 using osu.Game.Audio;
 using osu.Game.Graphics;
+using osu.Game.Graphics.Sprites;
 using osu.Game.Skinning;
 using osuTK.Graphics;
 
@@ -16,18 +18,26 @@ namespace osu.Game.Screens.Play
     public class PauseOverlay : GameplayMenuOverlay
     {
         public Action OnResume;
-        private Random rand = new Random();
-        private string[] rd = new string[]
+        private string desc;
+
+        public PauseOverlay(string desc)
         {
-            "testing string",
-            "syntax testing multiple index's",
-            "you're not going to do what i think you're going to do, are ya?"
-        };
+            this.desc = desc;
+        }
 
         public override bool IsPresent => base.IsPresent || pauseLoop.IsPlaying;
 
         public override string Header => "paused";
-        public override string Description => rd[rand.Next(rd.Length)];
+        public override string Description => desc;
+
+        public void SetDescription(string description)
+        {
+            desc = description;
+            var index0 = ((FillFlowContainer)Children[1]);
+            var index1 = ((FillFlowContainer)index0.Children[0]);
+            var setText = ((OsuSpriteText)index1.Children[1]);
+            setText.Text = Description;
+        }
 
         private SkinnableSound pauseLoop;
 

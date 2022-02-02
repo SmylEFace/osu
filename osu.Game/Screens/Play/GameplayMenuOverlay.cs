@@ -76,12 +76,14 @@ namespace osu.Game.Screens.Play
                 },
                 new FillFlowContainer
                 {
+                    
                     RelativeSizeAxes = Axes.X,
                     AutoSizeAxes = Axes.Y,
                     Direction = FillDirection.Vertical,
                     Spacing = new Vector2(0, 50),
                     Origin = Anchor.Centre,
                     Anchor = Anchor.Centre,
+                    
                     Children = new Drawable[]
                     {
                         new FillFlowContainer

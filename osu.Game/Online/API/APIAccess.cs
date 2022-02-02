@@ -146,7 +146,8 @@ namespace osu.Game.Online.API
                             }
                             catch (Exception e)
                             {
-                                //todo: this fails even on network-related issues. we should probably handle those differently.
+                                //todo: this fails even on network-related issues. we should probab
+                                //ly handle those differently.
                                 LastLoginError = e;
                                 log.Add(@"Login failed!");
                                 password = null;
