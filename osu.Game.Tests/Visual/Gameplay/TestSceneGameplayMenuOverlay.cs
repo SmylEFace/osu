@@ -35,7 +35,7 @@ namespace osu.Game.Tests.Visual.Gameplay
         {
             globalActionContainer.Children = new Drawable[]
             {
-                pauseOverlay = new PauseOverlay("Testing")
+                pauseOverlay = new PauseOverlay()
                 {
                     OnResume = () => Logger.Log(@"Resume"),
                     OnRetry = () => Logger.Log(@"Retry"),

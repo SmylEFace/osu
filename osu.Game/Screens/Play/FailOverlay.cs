@@ -14,14 +14,15 @@ namespace osu.Game.Screens.Play
         private string[] fq =
         {
             "you're dead, try again?",
-            "that was one of my favorite songs!",
+            "that was one of my favorite songs",
             "so close!",
-            "you'll get it next time!",
+            "you'll get it next time",
             "you were doing so good >_<",
-            "keep up the good work!",
+            "keep up the good work",
             "oh no! ;-;",
-            "",
-
+            "you tried!",
+            "better luck next time"
+                
         };
         public override string Description => fq[new Random().Next(fq.Length)];
 

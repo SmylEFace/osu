@@ -24,6 +24,10 @@ namespace osu.Game.Screens.Play
         {
             this.desc = desc;
         }
+        public PauseOverlay()
+        {
+
+        }
 
         public override bool IsPresent => base.IsPresent || pauseLoop.IsPlaying;
 

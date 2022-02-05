@@ -879,11 +879,8 @@ namespace osu.Game.Screens.Play
             && !HasFailed
             // already resuming
             && !IsResuming;
-
         public bool Pause()
         {
-            PauseOverlay.SetDescription(desc[r.Next(desc.Length)]);
-
             if (!pausingSupportedByCurrentState) return false;
 
             if (!IsResuming && PauseCooldownActive)
@@ -894,6 +891,8 @@ namespace osu.Game.Screens.Play
                 DrawableRuleset.CancelResume();
                 IsResuming = false;
             }
+            else
+                PauseOverlay.SetDescription(desc[r.Next(desc.Length)]);
 
             GameplayClockContainer.Stop();
 
