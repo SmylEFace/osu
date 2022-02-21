@@ -53,9 +53,11 @@ namespace osu.Game.Graphics.Cursor
 
             if (!hasValidInput || !CanShowCursor)
             {
+                /*
                 currentTarget?.Cursor?.Hide();
                 currentTarget = null;
                 return;
+                */
             }
 
             IProvideCursor newTarget = this;

@@ -1123,7 +1123,7 @@ namespace osu.Game
 
             ScreenOffsetContainer.X = horizontalOffset;
 
-            MenuCursorContainer.CanShowCursor = (ScreenStack.CurrentScreen as IOsuScreen)?.CursorVisible ?? false;
+            MenuCursorContainer.CanShowCursor = (ScreenStack.CurrentScreen as IOsuScreen)?.CursorVisible ?? true;
         }
 
         protected virtual void ScreenChanged(IScreen current, IScreen newScreen)
