@@ -39,8 +39,7 @@
     <ProjectReference Include="..\Templates\Rulesets\ruleset-scrolling-example\osu.Game.Rulesets.Pippidon\osu.Game.Rulesets.Pippidon.csproj" />
   </ItemGroup>
   <ItemGroup Label="Package References">
-    <PackageReference Include="Clowd.Squirrel" Version="2.8.28-pre" />
-    <PackageReference Include="Microsoft.NETCore.Targets" Version="5.0.0" />
+    <PackageReference Include="Clowd.Squirrel" Version="2.9.23-gc8da1a" />
     <PackageReference Include="Mono.Posix.NETStandard" Version="1.0.0" />
     <PackageReference Include="System.IO.Packaging" Version="6.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="5.0.14" />
@@ -48,7 +47,6 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
     <PackageReference Include="DiscordRichPresence" Version="1.0.175" />
   </ItemGroup>
   <ItemGroup Label="Resources">
